@@ -1,0 +1,6 @@
+{
+  "name": "منصة تلاقي القطرية للزواج",
+  "description": "منصة تلاقي القطرية للزواج - البوابة العصرية والآمنة للباحثين عن زواج شرعي وتوافق أسري في قطر، البديل الذكي لخدمات خطابة قطر بالدوحة بستر وخصوصية تامة.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,23 @@
+/* Shared by home, search and saved-member cards. */
+.member-card h3.member-card-title {
+  font-family: "Cairo", "Tajawal", Arial, sans-serif;
+  font-size: 11px;
+  line-height: 1.35;
+  font-weight: 700;
+  letter-spacing: normal;
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.member-card .member-card-view { background: #0b1828; color: #fff; font-size: 12px; line-height: 1.4; gap: 6px; white-space: nowrap; }
+.member-card .member-card-view svg { width: 16px; height: 16px; flex-shrink: 0; }
+@media (min-width: 640px) {
+  .member-card h3.member-card-title { font-size: 11.5px; }
+  .member-card .member-card-view { font-size: 13px; }
+}
+.member-card .member-card-gender-male { background: #2563eb; }
+.member-card .member-card-gender-female { background: #e11d48; }
+.member-card .member-card-view, .member-card button[aria-label="حفظ الملف"] { min-height: 42px; }
+.member-card button[aria-label="حفظ الملف"] { min-width: 42px; }
