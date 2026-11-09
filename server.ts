@@ -845,16 +845,104 @@ async function startServer() {
     }
   });
 
-  // 13. إدارة طلبات التوافق والمزامنة المالية عبر MySQL
-  app.get('/api/requests', async (_req, res) => {
+  // 13. إحصائيات لوحة الإدارة المباشرة من MySQL (تمنع التعارض بين أرقام لوحة المعلومات وقائمة الأعضاء)
+  app.get('/api/stats', async (_req, res) => {
+    const pool = getDbPool();
+    if (!pool) {
+      return res.json({ source: 'local' });
+    }
+
+    try {
+      const [[memberCounts]]: any = await pool.query(`
+        SELECT
+          COUNT(*) AS totalMembers,
+          COALESCE(SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END), 0) AS activeMembers,
+          COALESCE(SUM(CASE WHEN is_active = 0 THEN 1 ELSE 0 END), 0) AS pendingMembers,
+          COALESCE(SUM(CASE WHEN is_verified = 1 THEN 1 ELSE 0 END), 0) AS verified,
+          COALESCE(SUM(CASE WHEN is_featured = 1 OR plan_id != 'free' THEN 1 ELSE 0 END), 0) AS premium,
+          COALESCE(SUM(CASE WHEN gender = 'male' THEN 1 ELSE 0 END), 0) AS males,
+          COALESCE(SUM(CASE WHEN gender = 'female' THEN 1 ELSE 0 END), 0) AS females
+        FROM \`members\`
+      `).catch(() => [[{ totalMembers: 0, activeMembers: 0, pendingMembers: 0, verified: 0, premium: 0, males: 0, females: 0 }]]);
+
+      const [[requestCounts]]: any = await pool.query(`
+        SELECT
+          COUNT(*) AS totalRequests,
+          COALESCE(SUM(CASE WHEN stage = 'sent' OR status = 'pending' THEN 1 ELSE 0 END), 0) AS pendingRequests,
+          COALESCE(SUM(CASE WHEN stage NOT IN ('sent', 'completed', 'declined', 'cancelled') THEN 1 ELSE 0 END), 0) AS activeJourneys,
+          COALESCE(SUM(CASE WHEN stage = 'completed' THEN 1 ELSE 0 END), 0) AS completed,
+          COALESCE(SUM(CASE WHEN stage = 'declined' THEN 1 ELSE 0 END), 0) AS declined,
+          COALESCE(SUM(CASE WHEN stage = 'cancelled' THEN 1 ELSE 0 END), 0) AS cancelled,
+          COALESCE(SUM(CASE WHEN sender_paid = 1 THEN 1 ELSE 0 END + CASE WHEN receiver_paid = 1 THEN 1 ELSE 0 END), 0) AS depositsPaid,
+          COALESCE(SUM(sender_paid_amount + receiver_paid_amount), 0) AS revenue
+        FROM \`requests\`
+      `).catch(() => [[{ totalRequests: 0, pendingRequests: 0, activeJourneys: 0, completed: 0, declined: 0, cancelled: 0, depositsPaid: 0, revenue: 0 }]]);
+
+      const [stageRows]: any = await pool.query(`
+        SELECT stage, COUNT(*) AS count FROM \`requests\` GROUP BY stage
+      `).catch(() => []);
+
+      const stageBreakdown: Record<string, number> = {
+        sent: 0, accepted: 0, seriousness: 0, coordination: 0,
+        sharia_viewing: 0, engagement: 0, completed: 0, declined: 0, cancelled: 0,
+      };
+      if (Array.isArray(stageRows)) {
+        stageRows.forEach((r: any) => {
+          if (r.stage) stageBreakdown[r.stage] = Number(r.count) || 0;
+        });
+      }
+
+      res.json({
+        source: 'mysql',
+        totalMembers: Number(memberCounts?.totalMembers) || 0,
+        activeMembers: Number(memberCounts?.activeMembers) || 0,
+        pendingMembers: Number(memberCounts?.pendingMembers) || 0,
+        suspendedMembers: 0,
+        bannedMembers: 0,
+        verified: Number(memberCounts?.verified) || 0,
+        premium: Number(memberCounts?.premium) || 0,
+        males: Number(memberCounts?.males) || 0,
+        females: Number(memberCounts?.females) || 0,
+        maleCount: Number(memberCounts?.males) || 0,
+        femaleCount: Number(memberCounts?.females) || 0,
+        totalRequests: Number(requestCounts?.totalRequests) || 0,
+        pendingRequests: Number(requestCounts?.pendingRequests) || 0,
+        activeRequests: Number(requestCounts?.totalRequests) || 0,
+        activeJourneys: Number(requestCounts?.activeJourneys) || 0,
+        completed: Number(requestCounts?.completed) || 0,
+        declined: Number(requestCounts?.declined) || 0,
+        cancelled: Number(requestCounts?.cancelled) || 0,
+        depositsPaid: Number(requestCounts?.depositsPaid) || 0,
+        revenue: Number(requestCounts?.revenue) || 0,
+        totalRevenue: Number(requestCounts?.revenue) || 0,
+        totalTransactions: 0,
+        stageBreakdown,
+        recentEvents: [],
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 14. إدارة طلبات التوافق والمزامنة الفورية عبر MySQL
+  app.get('/api/requests', async (req, res) => {
     const pool = getDbPool();
     if (!pool) return res.json({ source: 'local', requests: [] });
 
     try {
-      const [rows]: any = await pool.query('SELECT * FROM `requests` ORDER BY `id` DESC');
+      const { userId } = req.query;
+      let query = 'SELECT * FROM `requests`';
+      const params: any[] = [];
+
+      if (userId) {
+        query += ' WHERE `sender_id` = ? OR `receiver_id` = ?';
+        params.push(String(userId), String(userId));
+      }
+      query += ' ORDER BY `id` DESC';
+
+      const [rows]: any = await pool.query(query, params);
       res.json({ source: 'mysql', requests: rows || [] });
     } catch (err: any) {
-      // إذا كان الجدول غير موجود بعد في phpMyAdmin نرجع مصفوفة فارغة
       res.json({ source: 'fallback', requests: [], error: err.message });
     }
   });
@@ -865,20 +953,33 @@ async function startServer() {
     if (!pool) return res.json({ success: true, localOnly: true });
 
     try {
+      const senderId = String(data.senderId || data.sender_id || '');
+      const receiverId = String(data.receiverId || data.receiver_id || '');
+      const message = String(data.message || 'طلب توافق واهتمام جديد عبر المنصة');
+      const requestCode = data.requestCode || `REQ-${Math.floor(1000 + Math.random() * 9000)}`;
+
+      // 1. جلب اسم وجنس المرسل لإثراء الطلب والإشعار
+      const [senderRows]: any = await pool.query(
+        'SELECT `nickname`, `real_name`, `gender` FROM `members` WHERE `id` = ? OR `member_code` = ? LIMIT 1',
+        [senderId, senderId]
+      ).catch(() => [[]]);
+      const senderName = senderRows?.[0]?.nickname || senderRows?.[0]?.real_name || (senderRows?.[0]?.gender === 'female' ? 'عضوة' : 'عضو');
+
+      // 2. إدخال الطلب في جدول requests
       const query = `
         INSERT INTO \`requests\` (
-          \`request_code\`, \`sender_id\`, \`receiver_id\`, \`status\`, \`stage\`,
+          \`request_code\`, \`sender_id\`, \`receiver_id\`, \`status\`, \`stage\`, \`message\`,
           \`total_fee\`, \`deposit_amount\`, \`sender_paid_amount\`, \`receiver_paid_amount\`,
           \`sender_paid\`, \`receiver_paid\`, \`sender_exempted\`, \`receiver_exempted\`, \`admin_notes\`
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `;
-      const requestCode = data.requestCode || `REQ-${Math.floor(1000 + Math.random() * 9000)}`;
       const [result]: any = await pool.query(query, [
         requestCode,
-        String(data.senderId || data.sender_id || ''),
-        String(data.receiverId || data.receiver_id || ''),
+        senderId,
+        receiverId,
         data.status || 'pending',
         data.stage || 'sent',
+        message,
         Number(data.totalFee || data.total_fee) || 5000,
         Number(data.depositAmount || data.deposit_amount) || 1000,
         Number(data.senderPaidAmount || data.sender_paid_amount) || 0,
@@ -889,8 +990,37 @@ async function startServer() {
         data.receiverExempted ? 1 : 0,
         data.adminNotes || null,
       ]);
-      res.json({ success: true, id: result.insertId, requestCode });
+
+      const insertedId = result.insertId;
+
+      // 3. إرسال إشعار فوري في MySQL للطرف المستقبل (cross-device notification)
+      await pool.query(
+        'INSERT INTO `notifications` (`member_id`, `type`, `title`, `message`, `link_url`, `is_read`) VALUES (?, ?, ?, ?, ?, 0)',
+        [
+          receiverId,
+          'request',
+          'طلب توافق جديد 💍',
+          `وصلك طلب توافق واهتمام جديد من «${senderName}». اضغط للمعاينة والرد.`,
+          `/requests`,
+        ]
+      ).catch(() => null);
+
+      res.json({
+        success: true,
+        id: insertedId,
+        requestCode,
+        request: {
+          id: insertedId,
+          requestCode,
+          senderId,
+          receiverId,
+          status: data.status || 'pending',
+          stage: data.stage || 'sent',
+          message,
+        },
+      });
     } catch (err: any) {
+      console.error('[Request POST Error]:', err);
       res.status(500).json({ success: false, error: err.message });
     }
   });
@@ -929,15 +1059,255 @@ async function startServer() {
 
       if (setClauses.length === 0) return res.json({ success: true, message: 'لا توجد حقول للتحديث' });
 
-      params.push(id);
-      await pool.query(`UPDATE \`requests\` SET ${setClauses.join(', ')} WHERE \`id\` = ? OR \`request_code\` = ?`, [...params, id]);
+      params.push(id, id);
+      await pool.query(`UPDATE \`requests\` SET ${setClauses.join(', ')} WHERE \`id\` = ? OR \`request_code\` = ?`, params);
       res.json({ success: true, message: 'تم تحديث البيانات المالية للطلب في Hostinger MySQL بنجاح' });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
     }
   });
 
-  // 14. تقرير الرقابة المالية الشامل والإيرادات من MySQL
+  // تنفيذ إجراءات الطلبات التفاعلية (قبول / اعتذار / إلغاء / تنسيق / سداد)
+  app.post('/api/requests/:id/actions', async (req, res) => {
+    const pool = getDbPool();
+    const id = req.params.id;
+    const { action, actorId, payload = {} } = req.body || {};
+
+    if (!pool) return res.json({ success: true, ok: true, localOnly: true });
+
+    try {
+      // جلب بيانات الطلب الحالية
+      const [reqRows]: any = await pool.query('SELECT * FROM `requests` WHERE `id` = ? OR `request_code` = ? LIMIT 1', [id, id]);
+      if (!Array.isArray(reqRows) || reqRows.length === 0) {
+        return res.status(404).json({ ok: false, error: 'الطلب غير موجود في قاعدة البيانات' });
+      }
+      const r = reqRows[0];
+
+      if (action === 'accept') {
+        await pool.query(
+          'UPDATE `requests` SET `status` = ?, `stage` = ? WHERE `id` = ?',
+          ['accepted_pending_payment', 'accepted', r.id]
+        );
+        // إشعار الطرف المرسل
+        await pool.query(
+          'INSERT INTO `notifications` (`member_id`, `type`, `title`, `message`, `link_url`) VALUES (?, ?, ?, ?, ?)',
+          [r.sender_id, 'request', 'تمت الموافقة المبدئية! 🎉', 'وافق الطرف الآخر على طلب التوافق المبدئي. يرجى سداد رسوم الجدية للمتابعة.', `/journey/${r.id}`]
+        ).catch(() => null);
+      } else if (action === 'decline') {
+        const reason = payload.reason || payload.declineReason || 'نعتذر لعدم التوافق';
+        await pool.query(
+          'UPDATE `requests` SET `status` = ?, `stage` = ?, `decline_reason` = ? WHERE `id` = ?',
+          ['declined', 'declined', reason, r.id]
+        );
+        await pool.query(
+          'INSERT INTO `notifications` (`member_id`, `type`, `title`, `message`, `link_url`) VALUES (?, ?, ?, ?, ?)',
+          [r.sender_id, 'request', 'اعتذار عن طلب التوافق', 'نعتذر، لم يتم قبول طلب التوافق من الطرف الآخر. نتمنى لك التوفيق مع ملف آخر.', '/requests']
+        ).catch(() => null);
+      } else if (action === 'cancel' || action === 'admin_cancel_no_match') {
+        const reason = payload.reason || payload.cancel_reason || 'لم يحدث نصيب وتم إلغاء الطلب';
+        await pool.query(
+          'UPDATE `requests` SET `status` = ?, `stage` = ?, `cancel_reason` = ? WHERE `id` = ?',
+          ['cancelled', 'cancelled', reason, r.id]
+        );
+        // إشعار الطرفين
+        await pool.query(
+          'INSERT INTO `notifications` (`member_id`, `type`, `title`, `message`, `link_url`) VALUES (?, ?, ?, ?, ?), (?, ?, ?, ?, ?)',
+          [
+            r.sender_id, 'system', 'تم إغلاق طلب التوافق', `تم إلغاء طلب التوافق (${reason})`, '/requests',
+            r.receiver_id, 'system', 'تم إغلاق طلب التوافق', `تم إلغاء طلب التوافق (${reason})`, '/requests',
+          ]
+        ).catch(() => null);
+      } else if (action === 'set_stage') {
+        const nextStage = payload.stage || 'sent';
+        const note = payload.note || null;
+        await pool.query(
+          'UPDATE `requests` SET `stage` = ?, `admin_notes` = COALESCE(?, `admin_notes`) WHERE `id` = ?',
+          [nextStage, note, r.id]
+        );
+      } else if (action === 'update_coordination') {
+        await pool.query(
+          'UPDATE `requests` SET `stage` = ?, `meeting_date` = ?, `meeting_notes` = ? WHERE `id` = ?',
+          ['coordination', payload.meetingDate || null, payload.meetingNotes || null, r.id]
+        );
+      } else if (action === 'admin_record_payment') {
+        const nextStage = payload.advance_to_coordination ? 'coordination' : r.stage;
+        await pool.query(
+          `UPDATE \`requests\` SET
+             \`sender_paid_amount\` = COALESCE(?, \`sender_paid_amount\`),
+             \`receiver_paid_amount\` = COALESCE(?, \`receiver_paid_amount\`),
+             \`sender_paid\` = CASE WHEN ? = 'paid' THEN 1 ELSE \`sender_paid\` END,
+             \`receiver_paid\` = CASE WHEN ? = 'paid' THEN 1 ELSE \`receiver_paid\` END,
+             \`stage\` = ?
+           WHERE \`id\` = ?`,
+          [
+            payload.sender_paid_amount,
+            payload.receiver_paid_amount,
+            payload.sender_status,
+            payload.receiver_status,
+            nextStage,
+            r.id,
+          ]
+        );
+      } else if (action === 'admin_confirm_match') {
+        await pool.query(
+          'UPDATE `requests` SET `status` = ?, `stage` = ?, `admin_notes` = ? WHERE `id` = ?',
+          ['completed', 'completed', payload.note || 'تم عقد القران بنجاح وحدث نصيب مبارك', r.id]
+        );
+      }
+
+      res.json({ ok: true, success: true });
+    } catch (err: any) {
+      console.error('[Request Action Error]:', err);
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // حذف طلب نهائياً من MySQL
+  app.delete('/api/requests/:id', async (req, res) => {
+    const pool = getDbPool();
+    const id = req.params.id;
+    if (!pool) return res.json({ success: true, localOnly: true });
+
+    try {
+      await pool.query('DELETE FROM `requests` WHERE `id` = ? OR `request_code` = ?', [id, id]);
+      res.json({ success: true, message: 'تم حذف الطلب بنجاح' });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 15. نظام الإشعارات الفورية والمزامنة بين الأجهزة (Notifications API)
+  app.get('/api/notifications', async (req, res) => {
+    const pool = getDbPool();
+    if (!pool) return res.json([]);
+
+    try {
+      const { userId } = req.query;
+      let query = 'SELECT * FROM `notifications`';
+      const params: any[] = [];
+      if (userId) {
+        query += ' WHERE `member_id` = ?';
+        params.push(String(userId));
+      }
+      query += ' ORDER BY `created_at` DESC LIMIT 100';
+
+      const [rows]: any = await pool.query(query, params);
+      res.json(rows || []);
+    } catch (err: any) {
+      res.json([]);
+    }
+  });
+
+  app.post('/api/notifications', async (req, res) => {
+    const pool = getDbPool();
+    const { member_id, type = 'system', title = 'إشعار من المنصة', message, link_url } = req.body || {};
+    if (!pool) return res.json({ success: true, localOnly: true });
+
+    try {
+      const [result]: any = await pool.query(
+        'INSERT INTO `notifications` (`member_id`, `type`, `title`, `message`, `link_url`, `is_read`) VALUES (?, ?, ?, ?, ?, 0)',
+        [String(member_id || ''), type, title, message || '', link_url || null]
+      );
+      res.json({ success: true, id: result.insertId });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.put('/api/notifications/:id/read', async (req, res) => {
+    const pool = getDbPool();
+    const id = req.params.id;
+    if (!pool) return res.json({ success: true, localOnly: true });
+
+    try {
+      await pool.query('UPDATE `notifications` SET `is_read` = 1 WHERE `id` = ?', [id]);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.put('/api/notifications/read-all', async (req, res) => {
+    const pool = getDbPool();
+    const { userId } = req.query;
+    if (!pool) return res.json({ success: true, localOnly: true });
+
+    try {
+      if (userId) {
+        await pool.query('UPDATE `notifications` SET `is_read` = 1 WHERE `member_id` = ?', [String(userId)]);
+      } else {
+        await pool.query('UPDATE `notifications` SET `is_read` = 1');
+      }
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete('/api/notifications/:id', async (req, res) => {
+    const pool = getDbPool();
+    const id = req.params.id;
+    if (!pool) return res.json({ success: true, localOnly: true });
+
+    try {
+      await pool.query('DELETE FROM `notifications` WHERE `id` = ?', [id]);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 16. المعاملات المالية (Transactions API)
+  app.get('/api/transactions', async (req, res) => {
+    const pool = getDbPool();
+    if (!pool) return res.json([]);
+
+    try {
+      const { memberId } = req.query;
+      let query = 'SELECT * FROM `transactions`';
+      const params: any[] = [];
+      if (memberId) {
+        query += ' WHERE `member_id` = ?';
+        params.push(String(memberId));
+      }
+      query += ' ORDER BY `id` DESC LIMIT 200';
+      const [rows]: any = await pool.query(query, params);
+      res.json(rows || []);
+    } catch (err: any) {
+      res.json([]);
+    }
+  });
+
+  app.post('/api/transactions', async (req, res) => {
+    const pool = getDbPool();
+    const tx = req.body || {};
+    if (!pool) return res.json({ success: true, localOnly: true });
+
+    try {
+      const refNo = tx.reference_no || tx.ref || `TX-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
+      const [result]: any = await pool.query(
+        `INSERT INTO \`transactions\` (
+          \`reference_no\`, \`member_id\`, \`journey_id\`, \`type\`, \`amount\`, \`currency\`, \`payment_method\`, \`payment_status\`, \`proof_image\`
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          refNo,
+          String(tx.member_id || tx.memberId || tx.userId || '1'),
+          tx.journey_id || tx.requestId || null,
+          tx.type || 'subscription',
+          Number(tx.amount) || 0,
+          tx.currency || 'QAR',
+          tx.payment_method || tx.method || 'credit_card',
+          tx.payment_status || tx.status || 'completed',
+          tx.proof_image || tx.proof || null,
+        ]
+      );
+      res.json({ success: true, id: result.insertId, refNo });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 17. تقرير الرقابة المالية الشامل والإيرادات من MySQL
   app.get('/api/financials', async (_req, res) => {
     const pool = getDbPool();
     if (!pool) {

@@ -75,11 +75,15 @@ export default function AdminDashboard() {
   }
 
   // بطاقات النظرة السريعة الرئيسية في الأعلى (تتضمن الأعضاء مع عددهم وطلبات التوافق وروابط الدخول المباشرة)
+  const totalCount = adminMembers?.length ?? displayStats.totalMembers ?? 0;
+  const maleCount = adminMembers ? adminMembers.filter((m: any) => m.gender === 'male').length : displayStats.males;
+  const femaleCount = adminMembers ? adminMembers.filter((m: any) => m.gender === 'female').length : displayStats.females;
+
   const quickOverviewCards = [
     {
       label: 'الأعضاء',
-      value: displayStats.totalMembers || (adminMembers?.length || 0),
-      subtext: `${displayStats.males} ذكور · ${displayStats.females} إناث`,
+      value: totalCount,
+      subtext: `${maleCount} ذكور · ${femaleCount} إناث`,
       to: '/admin/members?tab=members',
       icon: Users,
       color: 'text-blue-600 bg-blue-50 border-blue-100',
@@ -147,10 +151,10 @@ export default function AdminDashboard() {
             </span>
             <Link to="/admin/members?tab=members" className="px-3 py-1.5 rounded-full bg-amber-500/15 text-amber-400 hover:bg-amber-500/25 transition-colors text-xs font-cairo font-bold flex items-center gap-1 cursor-pointer">
               <Users className="w-3.5 h-3.5" />
-              <span>{displayStats.totalMembers} عضو</span>
+              <span>{totalCount} عضو</span>
             </Link>
             <span className="px-3 py-1.5 rounded-full bg-blue-500/15 text-blue-400 text-xs font-cairo font-bold">
-              {displayStats.males} ذكر · {displayStats.females} أنثى
+              {maleCount} ذكر · {femaleCount} أنثى
             </span>
           </div>
         </div>
