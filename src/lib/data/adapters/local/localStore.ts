@@ -1728,18 +1728,20 @@ function writeAdminMeta(meta: Record<string, AdminMemberMeta>) {
 
 function defaultMeta(m: Member): AdminMemberMeta {
   const plan: AdminMemberMeta['plan'] = memberPlan(m);
-  const num = parseInt(m.id.replace(/\D/g, '') || '0', 10);
-  const phoneTail = String(1000000 + (num * 13579) % 8999999);
-  const pwSeed = String(100000 + (num * 246813) % 899999);
+  const actualEmail = (m as any).email || (m as any).member_code || '';
+  const actualPhone = (m as any).whatsapp || (m as any).phone || '';
+  const actualPass = (m as any).password || (m as any).password_hash || (m as any).pass || '123456';
+  const actualRealName = (m as any).realName || (m as any).real_name || (m as any).fullName || (m as any).full_name || m.nickname;
+  
   return {
     status: (m as any).status || 'active',
     plan,
-    realName: (m as any).realName || m.nickname,
-    email: (m as any).email || `${m.id}@twafok.sa`,
-    phone: (m as any).phone || `+9665${phoneTail}`.slice(0, 13),
-    nationalId: (m as any).nationalId || `10${String(20000000 + (num * 7654321) % 79999999)}`,
-    password: (m as any).password || `Twafok@${pwSeed}`,
-    joinedAt: (m as any).joinedAt || '2025-01-15',
+    realName: actualRealName,
+    email: actualEmail,
+    phone: actualPhone,
+    nationalId: (m as any).nationalId || '',
+    password: actualPass,
+    joinedAt: (m as any).joinedAt || (m as any).created_at || (m as any).createdAt || new Date().toLocaleDateString('ar-SA'),
   };
 }
 
@@ -1763,11 +1765,11 @@ function getMeta(m: Member): AdminMemberMeta {
       all[m.id] = {
         status: foundAdmin.status || (m as any).status || 'active',
         plan: foundAdmin.plan || (m as any).plan || 'free',
-        realName: foundAdmin.realName || (m as any).realName || m.nickname,
-        email: foundAdmin.email || (m as any).email || `${m.id}@twafok.sa`,
-        phone: foundAdmin.phone || (m as any).phone || '',
-        nationalId: foundAdmin.nationalId || (m as any).nationalId || `10${String(20000000 + (parseInt(m.id.replace(/\D/g, '') || '0') * 7654321) % 79999999)}`,
-        password: foundAdmin.password || (m as any).password || DEMO_ADMIN_PASSWORD,
+        realName: foundAdmin.realName || (m as any).realName || (m as any).fullName || (m as any).full_name || m.nickname,
+        email: foundAdmin.email || (m as any).email || '',
+        phone: foundAdmin.phone || (m as any).phone || (m as any).whatsapp || '',
+        nationalId: foundAdmin.nationalId || (m as any).nationalId || '',
+        password: foundAdmin.password || (m as any).password || (m as any).password_hash || (m as any).pass || '123456',
         joinedAt: foundAdmin.joinedAt || (m as any).joinedAt || new Date().toLocaleDateString('ar-SA'),
       };
     } else {
@@ -1856,11 +1858,15 @@ export async function adminGetMembers(): Promise<AdminMemberRowLocal[]> {
     const verified = meta.verifiedOverride !== undefined ? meta.verifiedOverride : m.verified;
     const premium = meta.premiumOverride !== undefined ? meta.premiumOverride : m.premium;
     const pinned = meta.pinned !== undefined ? meta.pinned : !!m.pinned;
+    const actualPass = meta.password || (m as any).password || (m as any).password_hash || (m as any).pass || '123456';
+    const actualEmail = meta.email || (m as any).email || (m as any).member_code || '';
+    const actualPhone = meta.phone || (m as any).whatsapp || (m as any).phone || '';
+    const actualRealName = meta.realName || (m as any).realName || (m as any).real_name || (m as any).full_name || m.nickname;
     return {
       id: m.id, nickname: m.nickname, username: m.username, gender: m.gender, age: m.age,
       country: m.country, city: m.city, verified, premium,
-      realName: meta.realName, email: meta.email, phone: meta.phone,
-      nationalId: meta.nationalId, password: meta.password || 'Twafok@000000',
+      realName: actualRealName, email: actualEmail, phone: actualPhone,
+      nationalId: meta.nationalId, password: actualPass,
       status: meta.status, plan: meta.plan, pinned,
       joinedAt: meta.joinedAt, requestsCount,
       district: m.district, education: m.education, workType: m.workType,

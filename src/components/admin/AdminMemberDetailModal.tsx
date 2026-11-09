@@ -190,14 +190,31 @@ export default function AdminMemberDetailModal({ member, open, onClose, initialE
       setIsEditing(initialEditing);
       const bd = member.birthDate || member.birth_date || (member.age ? `${new Date().getFullYear() - member.age}-01-01` : '');
       const details = member.details && typeof member.details === 'object' ? member.details : {};
-      // تتلقى النافذة بياناتها من API ومن كاش الإدارة؛ نوحّد الشكل هنا حتى لا
-      // تختفي تفضيلات الشريك المسجلة سابقاً بسبب اختلاف camelCase / snake_case.
+      // إذا كان العضو مستورداً أو ليس لديه كلمة مرور صريحة، تظهر فارغة تماماً
+      const isImported = member.sourceType === 'imported' || (member as any).source_type === 'imported';
+      const rawPass = member.password || member.pass || member.password_hash || '';
+      const isDummyPass = !rawPass || rawPass === '123456' || rawPass === 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855' || rawPass.startsWith('Twafok@') || rawPass === 'Twafok@000000';
+      const actualPass = (isImported && isDummyPass) ? '' : (isDummyPass && isImported ? '' : (rawPass.startsWith('Twafok@') ? '' : rawPass));
+      
+      const rawEmail = member.email || '';
+      const isDummyEmail = rawEmail.includes('@tawafok.com') && (rawEmail.startsWith('tw-') || rawEmail.startsWith('m_') || isImported);
+      const actualEmail = (isImported && isDummyEmail) ? '' : (isDummyEmail ? '' : rawEmail);
+
+      const actualPhone = member.whatsapp || member.phone || '';
+      const actualRealName = member.realName || member.real_name || member.full_name || member.fullName || '';
+
       setEditForm({
         ...details,
         ...member,
+        password: actualPass,
+        email: actualEmail,
+        phone: actualPhone,
+        whatsapp: actualPhone,
+        sourceType: member.sourceType || (member as any).source_type || (isImported ? 'imported' : 'registered'),
         birthDate: bd,
         birth_date: bd,
-        realName: member.realName || member.real_name || '',
+        realName: actualRealName,
+        real_name: actualRealName,
         pCountry: member.pCountry || member.p_country || details.pCountry || 'لا يهم',
         pCity: member.pCity || member.p_city || details.pCity || 'لا يهم',
         pNationality: member.pNationality || member.p_nationality || details.pNationality || 'اقبل اجنبي',
@@ -220,21 +237,24 @@ export default function AdminMemberDetailModal({ member, open, onClose, initialE
     if (e) e.preventDefault();
     setIsSaving(true);
     try {
+      const willBeRegistered = Boolean(
+        editForm.password && String(editForm.password).trim() &&
+        (editForm.sourceType === 'registered' || editForm.email)
+      );
+
       const payload = {
         ...editForm,
         ...(editForm.password ? {
-          password: editForm.password,
-          pass: editForm.password,
-          password_hash: editForm.password,
+          password: String(editForm.password).trim(),
+          pass: String(editForm.password).trim(),
+          password_hash: String(editForm.password).trim(),
         } : {}),
-        ...(editForm.sourceType ? {
-          sourceType: editForm.sourceType,
-          source_type: editForm.sourceType,
-        } : {}),
+        sourceType: willBeRegistered ? 'registered' : (editForm.sourceType || 'registered'),
+        source_type: willBeRegistered ? 'registered' : (editForm.sourceType || 'registered'),
       };
 
-      // إذا تم تحديد كلمة مرور والتحويل لمسجل، إرسال التحويل للخادم وقاعدة البيانات
-      if (payload.password && (payload.sourceType === 'registered' || payload.source_type === 'registered')) {
+      // إذا تم تحديد كلمة مرور والبريد، تحويله لمسجل وحفظ كلمة المرور في قاعدة البيانات
+      if (payload.password) {
         await fetch(`/api/members/${encodeURIComponent(member.id)}/convert-to-registered`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

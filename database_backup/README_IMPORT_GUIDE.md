@@ -5,12 +5,11 @@
 ---
 
 ## 1. الملفات المعتمدة للاستيراد
-- **الملف الرئيسي الموحد الشامل**:
-  `database_backup/hostinger_master_database.sql` (وكذلك نسخته المماثلة في جذر المشروع `tawafok_database.sql`).
-- **المواصفات**:
-  - يحتوي على كافة الجداول الـ 14 كاملة مع جميع الأعمدة الحديثة (`nickname`, `real_name`, `whatsapp`, `district`, `tribe`, `ethnicity`, `ethnicity_other`, `partner_specifications`, `details`).
-  - ترميز موحد `utf8mb4_unicode_ci` لدعم اللغة العربية والرموز بنسبة 100%.
-  - يتضمن حساب الإدارة الافتراضي، باقات الاشتراك، المدن الخليجية، بيانات تجريبية واقعية لأعضاء، وتذاكر دعم فني.
+- **أولاً: لتحديث قاعدة بياناتك الحالية دون فقدان الأعضاء الـ 3 المسجلين (الحل المطلوب)**:
+  - **الملف**: `hostinger_safe_upgrade.sql` (موجود في جذر المشروع ومجلد `database_backup/`).
+  - **الوظيفة**: يقوم بإضافة كافة الأعمدة الجديدة (`nickname`, `real_name`, `whatsapp`, `district`, `tribe`, `ethnicity`, `ethnicity_other`, `partner_specifications`, `details`) إلى جدول الأعضاء الموجود، وينشئ الجداول الناقصة، ويحدّث بيانات الأعضاء الـ 3 تلقائياً دون حذف أي صف أو فقدان أي عضو.
+- **ثانياً: لإنشاء قاعدة بيانات جديدة من الصفر مع بيانات تجريبية وحساب إدارة جاهز**:
+  - **الملف**: `database_backup/hostinger_master_database.sql` (ونسخته `tawafok_database.sql`).
 
 ---
 

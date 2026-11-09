@@ -185,7 +185,62 @@ export class LocalStorageAdapter implements IDatabaseAdapter {
   deleteNotification = (id: number): void | Promise<void> => localStore.deleteNotification(id);
 
   // ===== لوحة الإدارة (Admin Panel Operations) =====
-  adminGetMembers = () => localStore.adminGetMembers();
+  adminGetMembers = async () => {
+    if (typeof fetch !== 'undefined') {
+      try {
+        const res = await fetch('/api/members?include_inactive=true&limit=5000').catch(() => null);
+        if (res && res.ok) {
+          const data = await res.json().catch(() => null);
+          if (data && Array.isArray(data.members) && data.members.length > 0) {
+            // تحويل أعضاء MySQL إلى كائنات متوافقة مع لوحة الإدارة وتحديث الذاكرة
+            const mapped = data.members.map((m: any) => ({
+              id: String(m.id || m.member_code),
+              member_code: m.member_code,
+              nickname: m.nickname || m.full_name || 'عضو',
+              realName: m.real_name || m.full_name || '',
+              username: m.username || m.member_code || '',
+              email: m.email || '',
+              phone: m.phone || m.whatsapp || '',
+              whatsapp: m.whatsapp || m.phone || '',
+              password: m.password_hash || m.password || '123456',
+              gender: m.gender || 'male',
+              age: Number(m.age) || 25,
+              country: m.country || 'قطر',
+              city: m.city || 'الدوحة',
+              district: m.district || '',
+              nationality: m.nationality || 'قطري',
+              maritalStatus: m.marital_status || 'single',
+              marriageType: m.marriage_type || 'announced',
+              verified: Boolean(m.is_verified),
+              premium: Boolean(m.is_featured),
+              status: m.is_active ? 'active' : 'suspended',
+              plan: m.plan_id || 'free',
+              sourceType: m.source_type || 'registered',
+              bio: m.bio || '',
+              aboutPartner: m.partner_requirements || '',
+              height: Number(m.height) || null,
+              weight: Number(m.weight) || null,
+              skinColor: m.skin_color || '',
+              health: m.health || '',
+              smoking: m.smoking || 'no',
+              education: m.education || '',
+              workType: m.work_type || '',
+              jobTitle: m.occupation || '',
+              housing: m.housing_type || '',
+              tribe: m.tribe || '',
+              ethnicity: m.ethnicity || '',
+              details: typeof m.details === 'string' ? JSON.parse(m.details || '{}') : (m.details || {}),
+              joinedAt: m.created_at ? new Date(m.created_at).toLocaleDateString('ar-SA') : new Date().toLocaleDateString('ar-SA'),
+            }));
+            return mapped;
+          }
+        }
+      } catch (e) {
+        console.warn('[AdminGetMembers] API fallback:', e);
+      }
+    }
+    return localStore.adminGetMembers();
+  };
   adminUpdateMember = (id: string, fields: any) => {
     if (typeof fetch !== 'undefined') {
       fetch('/api/members/' + encodeURIComponent(id), {
